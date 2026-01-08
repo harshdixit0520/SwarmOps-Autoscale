@@ -1,0 +1,66 @@
+services:
+  otp-be:
+    image: python:3.9-slim
+    ports:
+      - "8001-8010:80"
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+    command: 
+      - /bin/sh
+      - -c
+      - |
+        pip install flask && python -c '
+        from flask import Flask
+        import time
+        app = Flask(__name__)
+        @app.route("/")
+        def hello():
+            start = time.time()
+            while time.time() - start < 0.2: pass
+            return "Done"
+        app.run(host="0.0.0.0", port=80)
+        '
+
+  cadvisor:
+    image: zcube/cadvisor:latest
+    container_name: cadvisor
+    privileged: true
+    ports:
+      - "8080:8080"
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+      - /dev/disk/:/dev/disk:ro
+      - /var/run/docker.sock:/var/run/docker.sock:rw
+    devices:
+      - /dev/kmsg
+    depends_on:
+      - otp-be
+
+  prometheus:
+    image: prom/prometheus
+    ports:
+      - "9091:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+
+  autoscaler:
+    build: .
+    ports:
+      - "8888:8000"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - .:/app
+      - ./data:/data
+    environment:
+      - PROMETHEUS_URL=http://prometheus:9090
+      - COMPOSE_PROJECT_NAME=swarm-autoscaler
+      - FORCE_LOCAL_MODE=true
+    depends_on:
+      - prometheus

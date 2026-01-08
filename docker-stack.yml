@@ -1,0 +1,94 @@
+version: '3.8'
+
+networks:
+  deploy-network:
+    driver: overlay
+
+services:
+  # --- TARGET SERVICE ---
+  otp-be:
+    image: python:3.9-slim
+    networks:
+      - deploy-network
+    ports:
+      - target: 80
+        published: 8006
+        protocol: tcp
+        mode: ingress
+    deploy:
+      replicas: 1
+      resources:
+        limits:
+          cpus: '0.5'
+      labels:
+        - "autoscaler.enable=true"
+      restart_policy:
+        condition: on-failure
+    # FIXED COMMAND SYNTAX (Using Block Scalar '|')
+    command: 
+      - /bin/sh
+      - -c
+      - |
+        pip install flask && python -c '
+        from flask import Flask
+        import time
+        app = Flask(__name__)
+        @app.route("/")
+        def hello():
+            start = time.time()
+            while time.time() - start < 0.2: pass
+            return "Work Done"
+        app.run(host="0.0.0.0", port=80)
+        '
+
+  # --- MONITORING ---
+  cadvisor:
+    # Use google/cadvisor for Linux Servers, zcube for Mac
+    image: gcr.io/cadvisor/cadvisor:v0.47.0
+    networks:
+      - deploy-network
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+      - /var/run/docker.sock:/var/run/docker.sock:rw
+    deploy:
+      mode: global
+      resources:
+        limits:
+          cpus: '0.5'
+  prometheus:
+    image: prom/prometheus
+    networks:
+      - deploy-network
+    ports:
+      - "9091:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+
+  # --- AUTOSCALER ---
+  autoscaler:
+    # FIXED IMAGE NAME
+    image: harsh26261/swarm-otp:latest
+    networks:
+      - deploy-network
+    ports:
+      - "8888:8000"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./data:/data
+    environment:
+      - PROMETHEUS_URL=http://prometheus:9090
+      - COMPOSE_PROJECT_NAME=otp 
+      # REMOVED FORCE_LOCAL_MODE so it works in Swarm
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager

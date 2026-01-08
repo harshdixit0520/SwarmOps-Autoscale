@@ -1,0 +1,38 @@
+{
+    "otp-be": {
+        "enabled": true,
+        "min": 5,
+        "max": 10,
+        "target": 40.0
+    },
+    "otp_otp-be": {
+        "enabled": true,
+        "min": 1,
+        "max": 10,
+        "target": 40.0
+    },
+    "otp_cadvisor": {
+        "enabled": false,
+        "min": 1,
+        "max": 10,
+        "target": 40.0
+    },
+    "otp_prometheus": {
+        "enabled": false,
+        "min": 1,
+        "max": 10,
+        "target": 40.0
+    },
+    "otp_autoscaler": {
+        "enabled": false,
+        "min": 1,
+        "max": 10,
+        "target": 40.0
+    },
+    "swarm_autoscaler": {
+        "enabled": true,
+        "min": 1,
+        "max": 10,
+        "target": 40.0
+    }
+}

@@ -1,0 +1,94 @@
+version: '3.8'
+
+networks:
+  deploy-network:
+    driver: overlay
+
+services:
+  # --- TARGET SERVICE (The one we will scale) ---
+  otp-be:
+    image: python:3.9-slim
+    networks:
+      - deploy-network
+    # Expose on port 8006 using Swarm Ingress Mesh
+    ports:
+      - target: 80
+        published: 8006
+        protocol: tcp
+        mode: ingress
+    deploy:
+      replicas: 1  # Start with 1
+      resources:
+        limits:
+          cpus: '0.5' # Limit CPU so it spikes to 100% easily
+      labels:
+        # Autoscaler Labels (Optional, if your script reads them)
+        - "autoscaler.enable=true"
+      restart_policy:
+        condition: on-failure
+    # This Python script burns CPU for 200ms every time you request it
+    command: >
+      sh -c "pip install flask && python -c '
+      from flask import Flask
+      import time
+      app = Flask(__name__)
+      @app.route(\"/\")
+      def hello():
+          # CPU BURN: Busy wait for 0.2 seconds
+          start = time.time()
+          while time.time() - start < 0.2: pass
+          return \"Work Done\"
+      app.run(host=\"0.0.0.0\", port=80)
+      '"
+
+  # --- MONITORING (Required for Autoscaler) ---
+  cadvisor:
+    # Use zcube for Mac/ARM, use google/cadvisor for Intel/Linux
+    image: zcube/cadvisor:latest 
+    networks:
+      - deploy-network
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+      - /var/run/docker.sock:/var/run/docker.sock:rw
+    deploy:
+      mode: global
+
+  prometheus:
+    image: prom/prometheus
+    networks:
+      - deploy-network
+    ports:
+      - "9090:9090"
+    volumes:
+      # Create a simple config on the fly if you don't have one
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+
+  # --- YOUR AUTOSCALER ---
+  autoscaler:
+    # Make sure you built and pushed this image to your local registry!
+    image: harsh26261/swarm-otp:latest
+    networks:
+      - deploy-network
+    ports:
+      - "8888:8000"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./data:/data
+    environment:
+      - PROMETHEUS_URL=http://prometheus:9090
+      # Ensure this matches the stack name used in 'docker stack deploy'
+      - COMPOSE_PROJECT_NAME=otp 
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+

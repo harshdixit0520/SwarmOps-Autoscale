@@ -20,6 +20,7 @@ services:
       resources:
         limits:
           cpus: '0.5'
+          memory: 5120M
       labels:
         - "autoscaler.enable=true"
       restart_policy:
@@ -75,7 +76,7 @@ services:
   # --- AUTOSCALER ---
   autoscaler:
     # FIXED IMAGE NAME
-    image: harsh26261/swarm-otp:latest
+    image: harsh26261/swarm-otp:cpu
     networks:
       - deploy-network
     ports:

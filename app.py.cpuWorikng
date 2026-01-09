@@ -1,0 +1,345 @@
+#import docker
+#import json
+#import asyncio
+#import logging
+#import math
+#import os
+#import subprocess
+#from fastapi import FastAPI, Request
+#from fastapi.templating import Jinja2Templates
+#from fastapi.responses import HTMLResponse, JSONResponse
+#from prometheus_api_client import PrometheusConnect
+#from pydantic import BaseModel
+#from typing import Dict, Optional
+
+# --- CONFIG ---
+#PROMETHEUS_URL = os.getenv("PROMETHEUS_URL", "http://prometheus:9090")
+#SETTINGS_FILE = "/data/settings.json"
+#COMPOSE_PROJECT = os.getenv("COMPOSE_PROJECT_NAME", "swarm-autoscaler")
+
+# --- SETUP ---
+#app = FastAPI()
+#templates = Jinja2Templates(directory="templates")
+#client = docker.from_env()
+#prom = PrometheusConnect(url=PROMETHEUS_URL, disable_ssl=True)
+#logging.basicConfig(level=logging.INFO)
+#logger = logging.getLogger("SwarmOps")
+
+#try:
+#    IS_SWARM = client.swarm.attrs and len(client.swarm.attrs) > 0
+#except:
+#    IS_SWARM = False
+
+
+#if os.getenv("FORCE_LOCAL_MODE") == "true":
+#    IS_SWARM = False
+#    logger.info("🔧 FORCE_LOCAL_MODE enabled: Ignoring Swarm, using Container API")
+#else:
+#    try:
+#        IS_SWARM = client.swarm.attrs and len(client.swarm.attrs) > 0
+#    except:
+#        IS_SWARM = False
+
+#logger.info(f"🚀 MODE: {'SWARM CLUSTER' if IS_SWARM else 'LOCAL COMPOSE'}")
+
+# --- PERSISTENCE ---
+#def load_settings() -> Dict[str, dict]:
+#    if os.path.exists(SETTINGS_FILE):
+#        try:
+#            with open(SETTINGS_FILE, 'r') as f:
+#                return json.load(f)
+#        except: return {}
+#    return {}
+
+#def save_settings(data):
+#    os.makedirs(os.path.dirname(SETTINGS_FILE), exist_ok=True)
+#    with open(SETTINGS_FILE, 'w') as f:
+#        json.dump(data, f, indent=4)
+
+# --- METRICS ---
+#def get_cpu_metric(service_name):
+#    query = f'avg(rate(container_cpu_usage_seconds_total{{name=~".*{service_name}.*"}}[2m])) * 100'
+#    try:
+#        result = prom.custom_query(query)
+#        if result and result[0]['value']:
+#            return float(result[0]['value'][1])
+#    except:
+#        pass
+#    return 0.0
+
+#def get_replica_count(service_name):
+#    if IS_SWARM:
+#        try:
+#            return client.services.get(service_name).attrs['Spec']['Mode']['Replicated']['Replicas']
+#        except: return 0
+#    else:
+#        count = 0
+#        for c in client.containers.list():
+#            if service_name in c.name or c.labels.get('com.docker.compose.service') == service_name:
+#                count += 1
+#        return count
+
+#def scale_target(service_name, replicas):
+#    if IS_SWARM:
+#        client.services.get(service_name).scale(replicas)
+#    else:
+#        try:
+#            cmd = ["docker", "compose", "-p", COMPOSE_PROJECT, "scale", f"{service_name}={replicas}"]
+#            subprocess.run(cmd, check=True)
+#        except:
+#            logger.warning(f"Cannot scale {service_name} (Likely manual container)")
+
+#def get_all_services():
+#    services = set()
+#    if IS_SWARM:
+#        for s in client.services.list(): services.add(s.name)
+#    else:
+#        for c in client.containers.list():
+#            name = c.labels.get('com.docker.compose.service', c.name)
+#            services.add(name)
+#    return list(services)
+
+#async def autoscaler_loop():
+#    while True:
+#        settings = load_settings()
+#        try:
+#            for name in get_all_services():
+#                if name not in settings or not settings[name].get('enabled'): continue
+#                config = settings[name]
+#                curr = get_replica_count(name)
+#                cpu = get_cpu_metric(name)
+#                target = float(config.get('target', 40))
+                
+#                if cpu > 0 and target > 0:
+#                    ratio = cpu / target
+#                    new_count = math.ceil(curr * ratio)
+#                    new_count = max(int(config.get('min', 1)), min(int(config.get('max', 10)), int(new_count)))
+                    
+#                    if new_count != curr:
+#                        logger.info(f"SCALING {name}: {curr} -> {new_count} (CPU: {cpu:.2f}%)")
+#                        scale_target(name, new_count)
+#        except Exception as e:
+#            logger.error(f"Loop error: {e}")
+#        await asyncio.sleep(5)
+
+#@app.on_event("startup")
+#async def startup_event():
+#    asyncio.create_task(autoscaler_loop())
+
+#@app.get("/", response_class=HTMLResponse)
+#async def dashboard(request: Request):
+#    return templates.TemplateResponse("index.html", {"request": request})
+
+#@app.get("/api/data")
+#async def get_data():
+#    settings = load_settings()
+#    data = []
+#    for name in get_all_services():
+#        conf = settings.get(name, {"enabled": False, "min": 1, "max": 10, "target": 40})
+#        display_name = name.replace("swarm-autoscaler-", "").replace("-1", "")
+#        data.append({
+#            "name": name,
+#            "display": display_name,
+#            "replicas": get_replica_count(name),
+#            "cpu": round(get_cpu_metric(name), 2),
+#            "config": conf
+#        })
+#    return JSONResponse(data)
+
+#class ConfigUpdate(BaseModel):
+#    enabled: bool
+#    min: int
+#    max: int
+#    target: float
+
+#@app.post("/api/update/{service_name}")
+#async def update_service(service_name: str, config: ConfigUpdate):
+#    settings = load_settings()
+#    settings[service_name] = config.dict()
+#    save_settings(settings)
+#    return {"status": "ok"}
+
+
+
+
+import docker
+import json
+import asyncio
+import logging
+import math
+import os
+import subprocess
+from fastapi import FastAPI, Request
+from fastapi.templating import Jinja2Templates
+from fastapi.responses import HTMLResponse, JSONResponse
+from prometheus_api_client import PrometheusConnect
+from pydantic import BaseModel
+from typing import Dict, Optional
+
+# --- CONFIG ---
+PROMETHEUS_URL = os.getenv("PROMETHEUS_URL", "http://prometheus:9090")
+SETTINGS_FILE = "/data/settings.json"
+COMPOSE_PROJECT = os.getenv("COMPOSE_PROJECT_NAME", "swarm-autoscaler")
+
+# --- SETUP ---
+app = FastAPI()
+templates = Jinja2Templates(directory="templates")
+client = docker.from_env()
+prom = PrometheusConnect(url=PROMETHEUS_URL, disable_ssl=True)
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("SwarmOps")
+
+# --- SWARM DETECTION ---
+if os.getenv("FORCE_LOCAL_MODE") == "true":
+    IS_SWARM = False
+    logger.info("🔧 FORCE_LOCAL_MODE enabled: Ignoring Swarm, using Container API")
+else:
+    try:
+        IS_SWARM = client.swarm.attrs and len(client.swarm.attrs) > 0
+    except:
+        IS_SWARM = False
+
+logger.info(f"🚀 MODE: {'SWARM CLUSTER' if IS_SWARM else 'LOCAL COMPOSE'}")
+
+# --- PERSISTENCE ---
+def load_settings() -> Dict[str, dict]:
+    if os.path.exists(SETTINGS_FILE):
+        try:
+            with open(SETTINGS_FILE, 'r') as f:
+                return json.load(f)
+        except: return {}
+    return {}
+
+def save_settings(data):
+    os.makedirs(os.path.dirname(SETTINGS_FILE), exist_ok=True)
+    with open(SETTINGS_FILE, 'w') as f:
+        json.dump(data, f, indent=4)
+
+# --- METRICS (THE FIX) ---
+def get_cpu_metric(service_name):
+    # CRITICAL FIX: Differentiate between Swarm and Local metrics
+    if IS_SWARM:
+        # Swarm uses strict Service Labels. Window reduced to 1m for faster reaction.
+        query = f'avg(rate(container_cpu_usage_seconds_total{{container_label_com_docker_swarm_service_name="{service_name}"}}[1m])) * 100'
+    else:
+        # Local Compose uses loose name matching
+        query = f'avg(rate(container_cpu_usage_seconds_total{{name=~".*{service_name}.*"}}[1m])) * 100'
+    
+    try:
+        result = prom.custom_query(query)
+        if result and result[0]['value']:
+            val = float(result[0]['value'][1])
+            # Filter out noise (sometimes idle containers report 0.00001)
+            return val if val > 0.01 else 0.0
+    except Exception as e:
+        # logger.warning(f"Metric query failed for {service_name}: {e}")
+        pass
+    return 0.0
+
+def get_replica_count(service_name):
+    if IS_SWARM:
+        try:
+            return client.services.get(service_name).attrs['Spec']['Mode']['Replicated']['Replicas']
+        except: return 0
+    else:
+        count = 0
+        for c in client.containers.list():
+            # Match Compose Service OR Container Name
+            if service_name in c.name or c.labels.get('com.docker.compose.service') == service_name:
+                count += 1
+        return count
+
+def scale_target(service_name, replicas):
+    if IS_SWARM:
+        try:
+            client.services.get(service_name).scale(replicas)
+        except Exception as e:
+            logger.error(f"Failed to scale {service_name}: {e}")
+    else:
+        try:
+            cmd = ["docker", "compose", "-p", COMPOSE_PROJECT, "scale", f"{service_name}={replicas}"]
+            subprocess.run(cmd, check=True)
+        except:
+            logger.warning(f"Cannot scale {service_name} (Likely manual container)")
+
+def get_all_services():
+    services = set()
+    if IS_SWARM:
+        for s in client.services.list(): services.add(s.name)
+    else:
+        for c in client.containers.list():
+            name = c.labels.get('com.docker.compose.service', c.name)
+            services.add(name)
+    return list(services)
+
+async def autoscaler_loop():
+    while True:
+        settings = load_settings()
+        try:
+            for name in get_all_services():
+                if name not in settings or not settings[name].get('enabled'): continue
+                
+                config = settings[name]
+                curr = get_replica_count(name)
+                cpu = get_cpu_metric(name)
+                
+                target = float(config.get('target', 40))
+                
+                # Logic: Scale if load exists
+                if cpu > 0 and target > 0:
+                    ratio = cpu / target
+                    new_count = math.ceil(curr * ratio)
+                    
+                    # Apply Limits
+                    mn = int(config.get('min', 1))
+                    mx = int(config.get('max', 10))
+                    new_count = max(mn, min(mx, int(new_count)))
+                    
+                    if new_count != curr:
+                        logger.info(f"⚡ SCALING {name}: {curr} -> {new_count} (Load: {cpu:.2f}% / Target: {target}%)")
+                        scale_target(name, new_count)
+                        
+        except Exception as e:
+            logger.error(f"Loop error: {e}")
+            
+        await asyncio.sleep(5)
+
+@app.on_event("startup")
+async def startup_event():
+    asyncio.create_task(autoscaler_loop())
+
+@app.get("/", response_class=HTMLResponse)
+async def dashboard(request: Request):
+    return templates.TemplateResponse("index.html", {"request": request})
+
+@app.get("/api/data")
+async def get_data():
+    settings = load_settings()
+    data = []
+    # Sort list so cards don't jump around
+    for name in sorted(get_all_services()):
+        conf = settings.get(name, {"enabled": False, "min": 1, "max": 10, "target": 40})
+        # Clean up display name
+        display_name = name.replace("swarm_", "").replace("otp_", "")
+        data.append({
+            "name": name,
+            "display": display_name,
+            "replicas": get_replica_count(name),
+            "cpu": round(get_cpu_metric(name), 2),
+            "config": conf
+        })
+    return JSONResponse(data)
+
+class ConfigUpdate(BaseModel):
+    enabled: bool
+    min: int
+    max: int
+    target: float
+
+@app.post("/api/update/{service_name}")
+async def update_service(service_name: str, config: ConfigUpdate):
+    settings = load_settings()
+    settings[service_name] = config.dict()
+    save_settings(settings)
+    logger.info(f"💾 Updated config for {service_name}: {config.dict()}")
+    return {"status": "ok"}

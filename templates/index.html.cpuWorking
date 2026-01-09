@@ -30,33 +30,33 @@
                 const container = document.getElementById('service-list');
 
                 services.forEach(s => {
+                    // Unique ID for this service card
                     const cardId = `card-${s.name}`;
                     const existingCard = document.getElementById(cardId);
 
+                    // CSS Logic
                     const activeClass = s.config.enabled ? 'active-dot' : '';
                     const cardBorder = s.config.enabled ? 'border-success' : 'border-secondary';
                     const cpuColor = s.cpu > s.config.target ? 'text-danger' : 'text-warning';
-                    // Memory warning if > 80%
-                    const memColor = s.memory > 80 ? 'text-danger' : 'text-primary';
 
                     if (existingCard) {
-                        // UPDATE EXISTING
+                        // --- SMART UPDATE (Card exists, only update metrics) ---
+                        
+                        // Update Visuals
                         existingCard.className = `card ${cardBorder}`;
                         document.getElementById(`dot-${s.name}`).className = `status-dot ${activeClass} me-2`;
                         
+                        // Update Metrics Text
                         document.getElementById(`rep-${s.name}`).innerText = s.replicas;
-                        
                         const cpuEl = document.getElementById(`cpu-${s.name}`);
                         cpuEl.innerText = s.cpu + "%";
-                        cpuEl.className = cpuColor;
+                        cpuEl.className = cpuColor; // Flash red if high load
 
-                        // NEW: Update Memory
-                        const memEl = document.getElementById(`mem-${s.name}`);
-                        memEl.innerText = s.memory + "%";
-                        memEl.className = memColor;
+                        // CRITICAL: We DO NOT update the inputs (min/max/target) here.
+                        // This allows you to type without it resetting.
 
                     } else {
-                        // CREATE NEW
+                        // --- CREATE NEW (First time only) ---
                         const isEnabled = s.config.enabled ? 'checked' : '';
                         
                         const html = `
@@ -73,17 +73,13 @@
                                     </div>
                                     
                                     <div class="row text-center mb-3">
-                                        <div class="col-4">
+                                        <div class="col-6">
                                             <h3 class="text-info" id="rep-${s.name}">${s.replicas}</h3>
                                             <small>Replicas</small>
                                         </div>
-                                        <div class="col-4">
+                                        <div class="col-6">
                                             <h3 class="${cpuColor}" id="cpu-${s.name}">${s.cpu}%</h3>
-                                            <small>CPU</small>
-                                        </div>
-                                        <div class="col-4">
-                                            <h3 class="${memColor}" id="mem-${s.name}">${s.memory}%</h3>
-                                            <small>RAM</small>
+                                            <small>CPU Load</small>
                                         </div>
                                     </div>
 
@@ -94,7 +90,7 @@
                                         <input type="number" class="form-control bg-dark text-light" id="max-${s.name}" value="${s.config.max}">
                                     </div>
                                     <div class="input-group input-group-sm">
-                                        <span class="input-group-text bg-dark text-light">Target CPU%</span>
+                                        <span class="input-group-text bg-dark text-light">Target %</span>
                                         <input type="number" class="form-control bg-dark text-light" id="target-${s.name}" value="${s.config.target}">
                                         <button class="btn btn-outline-primary" onclick="saveConfig('${s.name}')">Save</button>
                                     </div>
@@ -117,7 +113,9 @@
             const target = parseFloat(document.getElementById(`target-${name}`).value);
             const enabled = document.getElementById(`enable-${name}`).checked;
 
+            // Simple visual feedback
             const btn = document.querySelector(`button[onclick="saveConfig('${name}')"]`);
+            const originalText = btn.innerText;
             btn.innerText = "Saving...";
 
             try {
@@ -126,11 +124,13 @@
                     headers: {'Content-Type': 'application/json'},
                     body: JSON.stringify({ enabled, min, max, target })
                 });
+                
+                // Force a reload to update border colors immediately
                 await loadData();
                 btn.innerText = "Saved!";
-                setTimeout(() => btn.innerText = "Save", 1000);
+                setTimeout(() => btn.innerText = originalText, 1000);
             } catch (e) {
-                alert("Error: " + e);
+                alert("Error saving: " + e);
                 btn.innerText = "Error";
             }
         }

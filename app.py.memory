@@ -5,6 +5,7 @@ import logging
 import math
 import os
 import subprocess
+import requests
 from fastapi import FastAPI, Request
 from fastapi.templating import Jinja2Templates
 from fastapi.responses import HTMLResponse, JSONResponse
@@ -17,21 +18,16 @@ PROMETHEUS_URL = os.getenv("PROMETHEUS_URL", "http://prometheus:9090")
 SETTINGS_FILE = "/data/settings.json"
 COMPOSE_PROJECT = os.getenv("COMPOSE_PROJECT_NAME", "swarm-autoscaler")
 
+# --- SETUP ---
 app = FastAPI()
 templates = Jinja2Templates(directory="templates")
-
-# --- DOCKER CLIENT SETUP ---
-# High-level client for Services/Nodes
 client = docker.from_env()
-# Low-level API Client for Tasks (Guarantees access to raw API)
-api_client = docker.APIClient(base_url='unix://var/run/docker.sock')
-
 prom = PrometheusConnect(url=PROMETHEUS_URL, disable_ssl=True)
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s', datefmt='%H:%M:%S')
 logger = logging.getLogger("SwarmOps")
 
-# --- SWARM CHECK ---
+# --- SWARM DETECTION ---
 if os.getenv("FORCE_LOCAL_MODE") == "true":
     IS_SWARM = False
 else:
@@ -46,125 +42,107 @@ logger.info(f"🚀 MODE: {'SWARM CLUSTER' if IS_SWARM else 'LOCAL COMPOSE'}")
 def load_settings() -> Dict[str, dict]:
     if os.path.exists(SETTINGS_FILE):
         try:
-            with open(SETTINGS_FILE, 'r') as f: return json.load(f)
+            with open(SETTINGS_FILE, 'r') as f:
+                return json.load(f)
         except: return {}
     return {}
 
 def save_settings(data):
     os.makedirs(os.path.dirname(SETTINGS_FILE), exist_ok=True)
-    with open(SETTINGS_FILE, 'w') as f: json.dump(data, f, indent=4)
+    with open(SETTINGS_FILE, 'w') as f:
+        json.dump(data, f, indent=4)
 
-# --- METRICS & SCALE ---
+# --- METRICS ---
 def get_metric_value(query):
     try:
         result = prom.custom_query(query)
         if result and result[0]['value']:
             val = float(result[0]['value'][1])
             return val if val > 0.01 else 0.0
-    except: return 0.0
+    except Exception as e:
+        return 0.0
     return 0.0
 
 def get_cpu_metric(service_name):
-    if IS_SWARM: query = f'avg(rate(container_cpu_usage_seconds_total{{container_label_com_docker_swarm_service_name="{service_name}"}}[1m])) * 100'
-    else: query = f'avg(rate(container_cpu_usage_seconds_total{{name=~".*{service_name}.*"}}[1m])) * 100'
+    if IS_SWARM:
+        query = f'avg(rate(container_cpu_usage_seconds_total{{container_label_com_docker_swarm_service_name="{service_name}"}}[1m])) * 100'
+    else:
+        query = f'avg(rate(container_cpu_usage_seconds_total{{name=~".*{service_name}.*"}}[1m])) * 100'
     return get_metric_value(query)
 
 def get_memory_metric(service_name):
-    if IS_SWARM: query = f'(sum(container_memory_usage_bytes{{container_label_com_docker_swarm_service_name="{service_name}"}}) / sum(container_spec_memory_limit_bytes{{container_label_com_docker_swarm_service_name="{service_name}"}})) * 100'
-    else: query = f'(sum(container_memory_usage_bytes{{name=~".*{service_name}.*"}}) / sum(container_spec_memory_limit_bytes{{name=~".*{service_name}.*"}})) * 100'
+    # Logic: (Usage / Limit) * 100
+    if IS_SWARM:
+        # We sum usage of all replicas and divide by sum of limits of all replicas to get Avg %
+        query = f'(sum(container_memory_usage_bytes{{container_label_com_docker_swarm_service_name="{service_name}"}}) / sum(container_spec_memory_limit_bytes{{container_label_com_docker_swarm_service_name="{service_name}"}})) * 100'
+    else:
+        query = f'(sum(container_memory_usage_bytes{{name=~".*{service_name}.*"}}) / sum(container_spec_memory_limit_bytes{{name=~".*{service_name}.*"}})) * 100'
+    
     val = get_metric_value(query)
-    return val if val < 1000 else 0.0
+    # Fallback: If no limit is set (0), return 0 to avoid DivisionByZero or Infinity errors
+    return val if val < 1000 else 0.0 
 
 def get_replica_count(service_name):
     try:
-        if IS_SWARM: return client.services.get(service_name).attrs['Spec']['Mode']['Replicated']['Replicas']
-        else: return 0
+        if IS_SWARM:
+            return client.services.get(service_name).attrs['Spec']['Mode']['Replicated']['Replicas']
+        else:
+            count = 0
+            for c in client.containers.list():
+                if service_name in c.name or c.labels.get('com.docker.compose.service') == service_name:
+                    count += 1
+            return count
     except: return 0
 
 def scale_target(service_name, replicas):
     if IS_SWARM:
-        try: client.services.get(service_name).scale(replicas)
-        except Exception as e: logger.error(f"❌ Scale Failed {service_name}: {e}")
+        try:
+            client.services.get(service_name).scale(replicas)
+        except Exception as e:
+            logger.error(f"❌ Scale Failed {service_name}: {e}")
+    else:
+        try:
+            cmd = ["docker", "compose", "-p", COMPOSE_PROJECT, "scale", f"{service_name}={replicas}"]
+            subprocess.run(cmd, check=True)
+        except: pass
 
 def get_all_services():
     services = set()
     try:
         if IS_SWARM:
             for s in client.services.list(): services.add(s.name)
+        else:
+            for c in client.containers.list():
+                name = c.labels.get('com.docker.compose.service', c.name)
+                services.add(name)
     except: pass
     return list(services)
 
-# --- SYSTEM STATS (ROBUST FIX) ---
-def get_system_stats():
-    stats = {
-        "nodes": [], 
-        "info": {"stacks": 0, "networks": 0, "volumes": 0, "containers": 0, "services": 0}
-    }
-    
-    if IS_SWARM:
-        try:
-            # FIX: Use low-level api_client.tasks() which definitely exists
-            all_tasks = api_client.tasks()
-            running_tasks = []
-            node_task_map = {}
-            
-            for t in all_tasks:
-                state = t.get('Status', {}).get('State')
-                if state == 'running':
-                    running_tasks.append(t)
-                    node_id = t.get('NodeID')
-                    if node_id:
-                        node_task_map[node_id] = node_task_map.get(node_id, 0) + 1
-
-            nodes = client.nodes.list()
-            for n in nodes:
-                nid = n.id
-                stats["nodes"].append({
-                    "name": n.attrs['Description']['Hostname'],
-                    "role": n.attrs['Spec']['Role'],
-                    "status": n.attrs['Status']['State'],
-                    "addr": n.attrs['Status'].get('Addr', 'N/A'),
-                    "containers": node_task_map.get(nid, 0)
-                })
-            
-            services = client.services.list()
-            networks = client.networks.list()
-            volumes = client.volumes.list()
-            
-            stacks = set()
-            for s in services:
-                labels = s.attrs.get('Spec', {}).get('Labels', {})
-                if 'com.docker.stack.namespace' in labels:
-                    stacks.add(labels['com.docker.stack.namespace'])
-
-            stats["info"] = {
-                "stacks": len(stacks),
-                "networks": len(networks),
-                "volumes": len(volumes),
-                "containers": len(running_tasks),
-                "services": len(services)
-            }
-        except Exception as e:
-            logger.error(f"System Stats Error: {e}")
-            
-    return stats
-
-# --- LOOP ---
 async def autoscaler_loop():
     logger.info("✅ Autoscaler Loop Started")
     while True:
         try:
             settings = load_settings()
-            for name in get_all_services():
+            services = get_all_services()
+            
+            if not services:
+                await asyncio.sleep(5)
+                continue
+
+            for name in services:
                 if name not in settings or not settings[name].get('enabled'): continue
+                
                 config = settings[name]
                 curr = get_replica_count(name)
                 cpu = get_cpu_metric(name)
+                
                 target = float(config.get('target', 40))
                 
+                # Currently only scaling on CPU, but now we LOG memory too
                 if cpu > 0 and target > 0:
                     ratio = cpu / target
                     new_count = math.ceil(curr * ratio)
+                    
                     mn = int(config.get('min', 1))
                     mx = int(config.get('max', 10))
                     new_count = max(mn, min(mx, int(new_count)))
@@ -172,7 +150,10 @@ async def autoscaler_loop():
                     if new_count != curr:
                         logger.info(f"⚡ SCALING {name}: {curr} -> {new_count} (CPU: {cpu:.1f}%)")
                         scale_target(name, new_count)
-        except Exception as e: logger.error(f"Loop Error: {e}")
+                        
+        except Exception as e:
+            logger.error(f"Loop Error: {e}")
+            
         await asyncio.sleep(5)
 
 @app.on_event("startup")
@@ -186,30 +167,23 @@ async def dashboard(request: Request):
 @app.get("/api/data")
 async def get_data():
     settings = load_settings()
-    services_data = []
-    
+    data = []
     try:
-        # Sort to keep UI stable
-        srv_list = sorted(get_all_services())
-        for name in srv_list:
+        services = sorted(get_all_services())
+        for name in services:
             conf = settings.get(name, {"enabled": False, "min": 1, "max": 10, "target": 40})
             display_name = name.replace("swarm_", "").replace("otp_", "")
-            services_data.append({
+            data.append({
                 "name": name,
                 "display": display_name,
                 "replicas": get_replica_count(name),
                 "cpu": round(get_cpu_metric(name), 1),
-                "memory": round(get_memory_metric(name), 1),
+                "memory": round(get_memory_metric(name), 1), # ADDED MEMORY HERE
                 "config": conf
             })
-    except: pass
-        
-    system_stats = get_system_stats()
-    
-    return JSONResponse({
-        "services": services_data,
-        "system": system_stats
-    })
+    except Exception as e:
+        logger.error(f"API Error: {e}")
+    return JSONResponse(data)
 
 class ConfigUpdate(BaseModel):
     enabled: bool

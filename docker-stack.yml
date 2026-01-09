@@ -76,7 +76,7 @@ services:
   # --- AUTOSCALER ---
   autoscaler:
     # FIXED IMAGE NAME
-    image: harsh26261/swarm-otp:cpu
+    image: harsh26261/swarm-otp:APIClient
     networks:
       - deploy-network
     ports:

@@ -6,95 +6,157 @@
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <style>
         body { background-color: #121212; color: #e0e0e0; font-family: monospace; }
-        .card { background-color: #1e1e1e; border: 1px solid #333; transition: border-color 0.3s; }
-        .status-dot { height: 10px; width: 10px; background-color: #444; border-radius: 50%; display: inline-block; transition: background-color 0.3s; box-shadow: 0 0 5px rgba(0,0,0,0.5); }
-        .active-dot { background-color: #0f0; box-shadow: 0 0 8px #0f0; }
-        .text-neon { color: #00ff00; }
+        .card { background-color: #1e1e1e; border: 1px solid #333; margin-bottom: 20px; }
+        .table-dark { background-color: #1e1e1e; }
+        .stat-box { background: #2c2c2c; padding: 15px; border-radius: 8px; text-align: center; border: 1px solid #444; }
+        .stat-num { font-size: 1.8rem; font-weight: bold; color: #0dcaf0; }
+        .stat-label { font-size: 0.8rem; color: #aaa; text-transform: uppercase; }
+        .status-dot { height: 10px; width: 10px; border-radius: 50%; display: inline-block; margin-right: 5px; }
+        .dot-ready { background-color: #0f0; box-shadow: 0 0 5px #0f0; }
+        .dot-down { background-color: #f00; }
+        .role-badge { font-size: 0.7em; padding: 2px 6px; border-radius: 4px; }
+        .role-manager { background: #0d6efd; color: white; }
+        .role-worker { background: #6c757d; color: white; }
     </style>
 </head>
 <body class="p-4">
     <div class="container-fluid">
-        <h2 class="mb-4">⚡ SwarmOps <span id="conn-status" class="badge bg-secondary text-dark fs-6">Connecting...</span></h2>
-        <div class="row" id="service-list"></div>
+        <div class="d-flex justify-content-between align-items-center mb-4">
+            <h2>⚡ SwarmOps <span id="conn-status" class="badge bg-secondary fs-6">Connecting...</span></h2>
+        </div>
+
+        <div class="row mb-4">
+            <div class="col-md-2 col-6 mb-2"><div class="stat-box"><div class="stat-num" id="count-nodes">-</div><div class="stat-label">Nodes</div></div></div>
+            <div class="col-md-2 col-6 mb-2"><div class="stat-box"><div class="stat-num" id="count-stacks">-</div><div class="stat-label">Stacks</div></div></div>
+            <div class="col-md-2 col-6 mb-2"><div class="stat-box"><div class="stat-num" id="count-services">-</div><div class="stat-label">Services</div></div></div>
+            <div class="col-md-2 col-6 mb-2"><div class="stat-box"><div class="stat-num text-warning" id="count-containers">-</div><div class="stat-label">Containers</div></div></div>
+            <div class="col-md-2 col-6 mb-2"><div class="stat-box"><div class="stat-num" id="count-nets">-</div><div class="stat-label">Networks</div></div></div>
+            <div class="col-md-2 col-6 mb-2"><div class="stat-box"><div class="stat-num" id="count-vols">-</div><div class="stat-label">Volumes</div></div></div>
+        </div>
+
+        <div class="row">
+            <div class="col-lg-5 mb-4">
+                <div class="card h-100">
+                    <div class="card-header bg-dark border-secondary">Cluster Nodes</div>
+                    <div class="card-body p-0">
+                        <table class="table table-dark table-hover mb-0" style="font-size: 0.9em;">
+                            <thead>
+                                <tr>
+                                    <th>Hostname</th>
+                                    <th>Role</th>
+                                    <th>Tasks</th> <th>Status</th>
+                                    <th>Addr</th>
+                                </tr>
+                            </thead>
+                            <tbody id="node-list">
+                                </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <div class="col-lg-7">
+                <div class="card bg-transparent border-0">
+                    <div class="card-header bg-transparent border-0 ps-0 text-white">Autoscaling Services</div>
+                    <div class="row" id="service-list">
+                        </div>
+                </div>
+            </div>
+        </div>
     </div>
 
     <script>
         async function loadData() {
             try {
                 const res = await fetch('/api/data');
-                const services = await res.json();
+                const json = await res.json();
                 
                 document.getElementById('conn-status').className = 'badge bg-success';
                 document.getElementById('conn-status').innerText = 'Online';
 
+                // --- 1. UPDATE SYSTEM STATS ---
+                const sys = json.system;
+                document.getElementById('count-nodes').innerText = sys.nodes.length;
+                document.getElementById('count-stacks').innerText = sys.info.stacks;
+                document.getElementById('count-services').innerText = sys.info.services;
+                document.getElementById('count-containers').innerText = sys.info.containers;
+                document.getElementById('count-nets').innerText = sys.info.networks;
+                document.getElementById('count-vols').innerText = sys.info.volumes;
+
+                // --- 2. UPDATE NODE TABLE ---
+                const nodeTable = document.getElementById('node-list');
+                let nodeHtml = '';
+                sys.nodes.forEach(n => {
+                    const statusClass = n.status === 'ready' ? 'dot-ready' : 'dot-down';
+                    const roleClass = n.role === 'manager' ? 'role-manager' : 'role-worker';
+                    
+                    // Color code high container counts
+                    const countColor = n.containers > 0 ? 'text-info' : 'text-muted';
+
+                    nodeHtml += `
+                    <tr>
+                        <td><span class="status-dot ${statusClass}"></span>${n.name}</td>
+                        <td><span class="role-badge ${roleClass}">${n.role}</span></td>
+                        <td class="${countColor} fw-bold">${n.containers}</td>
+                        <td>${n.status}</td>
+                        <td class="text-muted">${n.addr}</td>
+                    </tr>`;
+                });
+                nodeTable.innerHTML = nodeHtml;
+
+                // --- 3. UPDATE SERVICE CARDS ---
                 const container = document.getElementById('service-list');
+                const services = json.services;
 
                 services.forEach(s => {
                     const cardId = `card-${s.name}`;
                     const existingCard = document.getElementById(cardId);
-
-                    const activeClass = s.config.enabled ? 'active-dot' : '';
+                    
+                    const activeClass = s.config.enabled ? 'dot-ready' : '';
                     const cardBorder = s.config.enabled ? 'border-success' : 'border-secondary';
                     const cpuColor = s.cpu > s.config.target ? 'text-danger' : 'text-warning';
-                    // Memory warning if > 80%
                     const memColor = s.memory > 80 ? 'text-danger' : 'text-primary';
 
                     if (existingCard) {
                         // UPDATE EXISTING
                         existingCard.className = `card ${cardBorder}`;
-                        document.getElementById(`dot-${s.name}`).className = `status-dot ${activeClass} me-2`;
-                        
                         document.getElementById(`rep-${s.name}`).innerText = s.replicas;
                         
                         const cpuEl = document.getElementById(`cpu-${s.name}`);
                         cpuEl.innerText = s.cpu + "%";
                         cpuEl.className = cpuColor;
 
-                        // NEW: Update Memory
                         const memEl = document.getElementById(`mem-${s.name}`);
                         memEl.innerText = s.memory + "%";
                         memEl.className = memColor;
-
                     } else {
                         // CREATE NEW
                         const isEnabled = s.config.enabled ? 'checked' : '';
-                        
                         const html = `
-                        <div class="col-md-4 mb-3" id="wrapper-${s.name}">
+                        <div class="col-md-6 mb-3">
                             <div class="card ${cardBorder}" id="${cardId}">
                                 <div class="card-body">
                                     <div class="d-flex justify-content-between align-items-center mb-3">
-                                        <h5 class="card-title mb-0">
-                                            <span id="dot-${s.name}" class="status-dot ${activeClass} me-2"></span>${s.display}
+                                        <h5 class="card-title mb-0 text-truncate" title="${s.name}">
+                                            <span class="status-dot ${activeClass}" style="background-color:#444"></span>${s.display}
                                         </h5>
                                         <div class="form-check form-switch">
                                             <input class="form-check-input" type="checkbox" id="enable-${s.name}" onchange="saveConfig('${s.name}')" ${isEnabled}>
                                         </div>
                                     </div>
-                                    
                                     <div class="row text-center mb-3">
-                                        <div class="col-4">
-                                            <h3 class="text-info" id="rep-${s.name}">${s.replicas}</h3>
-                                            <small>Replicas</small>
-                                        </div>
-                                        <div class="col-4">
-                                            <h3 class="${cpuColor}" id="cpu-${s.name}">${s.cpu}%</h3>
-                                            <small>CPU</small>
-                                        </div>
-                                        <div class="col-4">
-                                            <h3 class="${memColor}" id="mem-${s.name}">${s.memory}%</h3>
-                                            <small>RAM</small>
-                                        </div>
+                                        <div class="col-4"><h3 class="text-info" id="rep-${s.name}">${s.replicas}</h3><small>Replicas</small></div>
+                                        <div class="col-4"><h3 class="${cpuColor}" id="cpu-${s.name}">${s.cpu}%</h3><small>CPU</small></div>
+                                        <div class="col-4"><h3 class="${memColor}" id="mem-${s.name}">${s.memory}%</h3><small>RAM</small></div>
                                     </div>
-
                                     <div class="input-group input-group-sm mb-2">
-                                        <span class="input-group-text bg-dark text-light">Min</span>
+                                        <span class="input-group-text bg-dark text-secondary">Min</span>
                                         <input type="number" class="form-control bg-dark text-light" id="min-${s.name}" value="${s.config.min}">
-                                        <span class="input-group-text bg-dark text-light">Max</span>
+                                        <span class="input-group-text bg-dark text-secondary">Max</span>
                                         <input type="number" class="form-control bg-dark text-light" id="max-${s.name}" value="${s.config.max}">
                                     </div>
                                     <div class="input-group input-group-sm">
-                                        <span class="input-group-text bg-dark text-light">Target CPU%</span>
+                                        <span class="input-group-text bg-dark text-secondary">Target CPU%</span>
                                         <input type="number" class="form-control bg-dark text-light" id="target-${s.name}" value="${s.config.target}">
                                         <button class="btn btn-outline-primary" onclick="saveConfig('${s.name}')">Save</button>
                                     </div>
@@ -104,6 +166,7 @@
                         container.insertAdjacentHTML('beforeend', html);
                     }
                 });
+
             } catch (e) { 
                 console.error(e);
                 document.getElementById('conn-status').className = 'badge bg-danger';
@@ -116,9 +179,8 @@
             const max = parseInt(document.getElementById(`max-${name}`).value);
             const target = parseFloat(document.getElementById(`target-${name}`).value);
             const enabled = document.getElementById(`enable-${name}`).checked;
-
             const btn = document.querySelector(`button[onclick="saveConfig('${name}')"]`);
-            btn.innerText = "Saving...";
+            btn.innerText = "...";
 
             try {
                 await fetch(`/api/update/${name}`, {
@@ -127,12 +189,9 @@
                     body: JSON.stringify({ enabled, min, max, target })
                 });
                 await loadData();
-                btn.innerText = "Saved!";
+                btn.innerText = "Saved";
                 setTimeout(() => btn.innerText = "Save", 1000);
-            } catch (e) {
-                alert("Error: " + e);
-                btn.innerText = "Error";
-            }
+            } catch (e) { alert("Error: " + e); }
         }
 
         loadData();

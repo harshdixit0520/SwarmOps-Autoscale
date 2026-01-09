@@ -1,95 +1,167 @@
 version: '3.8'
 
 networks:
-  deploy-network:
+  swarm-network:
     driver: overlay
+    attachable: true
+
+volumes:
+  prometheus-data:
+  autoscaler-data:
 
 services:
-  # --- TARGET SERVICE ---
-  otp-be:
+  # --- DEMO BACKEND SERVICE (Scalable) ---
+  backend:
     image: python:3.9-slim
     networks:
-      - deploy-network
+      - swarm-network
     ports:
       - target: 80
         published: 8006
         protocol: tcp
         mode: ingress
     deploy:
-      replicas: 1
+      replicas: 2
       resources:
         limits:
           cpus: '0.5'
-          memory: 5120M
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 256M
       labels:
-        - "autoscaler.enable=true"
+        - "autoscaler.enabled=true"
       restart_policy:
         condition: on-failure
-    # FIXED COMMAND SYNTAX (Using Block Scalar '|')
+        delay: 5s
+        max_attempts: 3
     command: 
       - /bin/sh
       - -c
       - |
-        pip install flask && python -c '
+        pip install -q flask && python -c '
         from flask import Flask
         import time
+        import random
         app = Flask(__name__)
         @app.route("/")
         def hello():
+            # Simulate variable CPU load
             start = time.time()
-            while time.time() - start < 0.2: pass
-            return "Work Done"
+            iterations = random.randint(1000, 10000)
+            result = sum(i**2 for i in range(iterations))
+            elapsed = time.time() - start
+            return f"Computed {iterations} iterations in {elapsed:.3f}s"
+        @app.route("/health")
+        def health():
+            return {"status": "healthy"}
         app.run(host="0.0.0.0", port=80)
         '
 
-  # --- MONITORING ---
-  cadvisor:
-    # Use google/cadvisor for Linux Servers, zcube for Mac
-    image: gcr.io/cadvisor/cadvisor:v0.47.0
+  # --- DEMO FRONTEND SERVICE (Scalable) ---
+  frontend:
+    image: nginx:alpine
     networks:
-      - deploy-network
+      - swarm-network
+    ports:
+      - target: 80
+        published: 8007
+        protocol: tcp
+        mode: ingress
+    deploy:
+      replicas: 1
+      resources:
+        limits:
+          cpus: '0.25'
+          memory: 256M
+      labels:
+        - "autoscaler.enabled=true"
+      restart_policy:
+        condition: on-failure
+
+  # --- MONITORING: cAdvisor (Global - on all nodes) ---
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:v0.47.0
+    hostname: '{{.Node.Hostname}}'
+    networks:
+      - swarm-network
     volumes:
       - /:/rootfs:ro
       - /var/run:/var/run:ro
       - /sys:/sys:ro
       - /var/lib/docker/:/var/lib/docker:ro
-      - /var/run/docker.sock:/var/run/docker.sock:rw
+      - /var/run/docker.sock:/var/run/docker.sock:ro
     deploy:
-      mode: global
+      mode: global  # Runs on every node
       resources:
         limits:
-          cpus: '0.5'
+          cpus: '0.3'
+          memory: 256M
+      labels:
+        - "prometheus.job=cadvisor"
+    command:
+      - '--housekeeping_interval=10s'
+      - '--docker_only=true'
+      - '--disable_metrics=disk,diskIO,network,tcp,udp,percpu,sched,process'
+
+  # --- MONITORING: Prometheus ---
   prometheus:
-    image: prom/prometheus
+    image: prom/prometheus:latest
+    hostname: prometheus
     networks:
-      - deploy-network
+      - swarm-network
     ports:
-      - "9091:9090"
+      - target: 9090
+        published: 9090
+        protocol: tcp
     volumes:
-      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention.time=7d'
+      - '--web.console.libraries=/usr/share/prometheus/console_libraries'
+      - '--web.console.templates=/usr/share/prometheus/consoles'
     deploy:
       replicas: 1
       placement:
         constraints:
           - node.role == manager
+      resources:
+        limits:
+          cpus: '1'
+          memory: 1G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
 
   # --- AUTOSCALER ---
   autoscaler:
-    # FIXED IMAGE NAME
-    image: harsh26261/swarm-otp:APIClient
+    image: harsh26261/swarm-otp:uifix
+    hostname: autoscaler
     networks:
-      - deploy-network
+      - swarm-network
     ports:
-      - "8888:8000"
+      - target: 8000
+        published: 8888
+        protocol: tcp
     volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
-      - ./data:/data
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - autoscaler-data:/data
     environment:
       - PROMETHEUS_URL=http://prometheus:9090
-      - COMPOSE_PROJECT_NAME=otp 
-      # REMOVED FORCE_LOCAL_MODE so it works in Swarm
+      - COMPOSE_PROJECT_NAME=swarm-autoscaler
+      - SCALING_COOLDOWN=30
     deploy:
       replicas: 1
       placement:
         constraints:
           - node.role == manager
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+      restart_policy:
+        condition: on-failure
+        delay: 10s

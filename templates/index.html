@@ -2,71 +2,240 @@
 <html lang="en" data-bs-theme="dark">
 <head>
     <meta charset="UTF-8">
-    <title>SwarmOps</title>
+    <title>Swarm Autoscaler</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <style>
-        body { background-color: #121212; color: #e0e0e0; font-family: monospace; }
-        .card { background-color: #1e1e1e; border: 1px solid #333; margin-bottom: 20px; }
-        .table-dark { background-color: #1e1e1e; }
-        .stat-box { background: #2c2c2c; padding: 15px; border-radius: 8px; text-align: center; border: 1px solid #444; }
-        .stat-num { font-size: 1.8rem; font-weight: bold; color: #0dcaf0; }
-        .stat-label { font-size: 0.8rem; color: #aaa; text-transform: uppercase; }
-        .status-dot { height: 10px; width: 10px; border-radius: 50%; display: inline-block; margin-right: 5px; }
-        .dot-ready { background-color: #0f0; box-shadow: 0 0 5px #0f0; }
-        .dot-down { background-color: #f00; }
-        .role-badge { font-size: 0.7em; padding: 2px 6px; border-radius: 4px; }
-        .role-manager { background: #0d6efd; color: white; }
-        .role-worker { background: #6c757d; color: white; }
+        body { 
+            background-color: #0d1117; 
+            color: #e6edf3; 
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', Helvetica, Arial, sans-serif;
+        }
+        .card { 
+            background-color: #161b22; 
+            border: 1px solid #30363d; 
+            margin-bottom: 20px; 
+            transition: border-color 0.3s;
+        }
+        .card:hover { border-color: #58a6ff; }
+        .table-dark { background-color: #0d1117; }
+        .stat-box { 
+            background: linear-gradient(135deg, #1f2937 0%, #161b22 100%);
+            padding: 20px; 
+            border-radius: 12px; 
+            text-align: center; 
+            border: 1px solid #30363d;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+        .stat-box:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(88, 166, 255, 0.2);
+        }
+        .stat-num { 
+            font-size: 2rem; 
+            font-weight: 700; 
+            background: linear-gradient(135deg, #58a6ff 0%, #1f6feb 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+        .stat-num.warning { 
+            background: linear-gradient(135deg, #f0883e 0%, #db6d28 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+        .stat-label { 
+            font-size: 0.75rem; 
+            color: #8b949e; 
+            text-transform: uppercase; 
+            font-weight: 600;
+            letter-spacing: 0.5px;
+            margin-top: 8px;
+        }
+        .status-dot { 
+            height: 8px; 
+            width: 8px; 
+            border-radius: 50%; 
+            display: inline-block; 
+            margin-right: 8px; 
+        }
+        .dot-ready { 
+            background-color: #3fb950; 
+            box-shadow: 0 0 8px #3fb950; 
+            animation: pulse 2s infinite;
+        }
+        .dot-down { background-color: #f85149; }
+        .dot-global { 
+            background-color: #a371f7; 
+            box-shadow: 0 0 8px #a371f7; 
+        }
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.6; }
+        }
+        .role-badge { 
+            font-size: 0.7rem; 
+            padding: 3px 8px; 
+            border-radius: 6px; 
+            font-weight: 600;
+        }
+        .role-manager { 
+            background: linear-gradient(135deg, #1f6feb 0%, #1158c7 100%); 
+            color: white; 
+        }
+        .role-worker { 
+            background: linear-gradient(135deg, #6e7681 0%, #484f58 100%); 
+            color: white; 
+        }
+        .mode-badge {
+            font-size: 0.65rem;
+            padding: 2px 6px;
+            border-radius: 4px;
+            background: #21262d;
+            color: #a371f7;
+            border: 1px solid #a371f7;
+        }
+        .metric-card {
+            background: #0d1117;
+            border: 1px solid #30363d;
+            border-radius: 8px;
+            padding: 12px;
+            text-align: center;
+        }
+        .metric-value {
+            font-size: 1.8rem;
+            font-weight: 700;
+            margin-bottom: 4px;
+        }
+        .metric-label {
+            font-size: 0.75rem;
+            color: #8b949e;
+            text-transform: uppercase;
+        }
+        .btn-outline-primary {
+            border-color: #1f6feb;
+            color: #58a6ff;
+        }
+        .btn-outline-primary:hover {
+            background-color: #1f6feb;
+            border-color: #1f6feb;
+        }
+        .form-control:focus, .form-check-input:focus {
+            border-color: #58a6ff;
+            box-shadow: 0 0 0 0.2rem rgba(88, 166, 255, 0.25);
+        }
+        .threshold-group {
+            background: #0d1117;
+            border: 1px solid #30363d;
+            border-radius: 8px;
+            padding: 10px;
+            margin-bottom: 8px;
+        }
+        .threshold-label {
+            font-size: 0.7rem;
+            color: #8b949e;
+            text-transform: uppercase;
+            font-weight: 600;
+            margin-bottom: 6px;
+        }
     </style>
 </head>
 <body class="p-4">
     <div class="container-fluid">
+        <!-- Header -->
         <div class="d-flex justify-content-between align-items-center mb-4">
-            <h2>⚡ SwarmOps <span id="conn-status" class="badge bg-secondary fs-6">Connecting...</span></h2>
+            <div>
+                <h2 class="mb-1">⚡ Swarm Autoscaler</h2>
+                <small class="text-muted">Intelligent container orchestration</small>
+            </div>
+            <span id="conn-status" class="badge bg-secondary fs-6">Connecting...</span>
         </div>
 
+        <!-- System Stats -->
         <div class="row mb-4">
-            <div class="col-md-2 col-6 mb-2"><div class="stat-box"><div class="stat-num" id="count-nodes">-</div><div class="stat-label">Nodes</div></div></div>
-            <div class="col-md-2 col-6 mb-2"><div class="stat-box"><div class="stat-num" id="count-stacks">-</div><div class="stat-label">Stacks</div></div></div>
-            <div class="col-md-2 col-6 mb-2"><div class="stat-box"><div class="stat-num" id="count-services">-</div><div class="stat-label">Services</div></div></div>
-            <div class="col-md-2 col-6 mb-2"><div class="stat-box"><div class="stat-num text-warning" id="count-containers">-</div><div class="stat-label">Containers</div></div></div>
-            <div class="col-md-2 col-6 mb-2"><div class="stat-box"><div class="stat-num" id="count-nets">-</div><div class="stat-label">Networks</div></div></div>
-            <div class="col-md-2 col-6 mb-2"><div class="stat-box"><div class="stat-num" id="count-vols">-</div><div class="stat-label">Volumes</div></div></div>
+            <div class="col-md-2 col-6 mb-2">
+                <div class="stat-box">
+                    <div class="stat-num" id="count-nodes">-</div>
+                    <div class="stat-label">Nodes</div>
+                </div>
+            </div>
+            <div class="col-md-2 col-6 mb-2">
+                <div class="stat-box">
+                    <div class="stat-num" id="count-stacks">-</div>
+                    <div class="stat-label">Stacks</div>
+                </div>
+            </div>
+            <div class="col-md-2 col-6 mb-2">
+                <div class="stat-box">
+                    <div class="stat-num" id="count-services">-</div>
+                    <div class="stat-label">Services</div>
+                </div>
+            </div>
+            <div class="col-md-2 col-6 mb-2">
+                <div class="stat-box">
+                    <div class="stat-num warning" id="count-containers">-</div>
+                    <div class="stat-label">Containers</div>
+                </div>
+            </div>
+            <div class="col-md-2 col-6 mb-2">
+                <div class="stat-box">
+                    <div class="stat-num" id="count-nets">-</div>
+                    <div class="stat-label">Networks</div>
+                </div>
+            </div>
+            <div class="col-md-2 col-6 mb-2">
+                <div class="stat-box">
+                    <div class="stat-num" id="count-vols">-</div>
+                    <div class="stat-label">Volumes</div>
+                </div>
+            </div>
         </div>
 
-        <div class="row">
-            <div class="col-lg-5 mb-4">
-                <div class="card h-100">
-                    <div class="card-header bg-dark border-secondary">Cluster Nodes</div>
+        <!-- Cluster Nodes - Full Width -->
+        <div class="row mb-4">
+            <div class="col-12">
+                <div class="card">
+                    <div class="card-header bg-dark border-secondary">
+                        <strong>Cluster Nodes</strong>
+                    </div>
                     <div class="card-body p-0">
-                        <table class="table table-dark table-hover mb-0" style="font-size: 0.9em;">
+                        <table class="table table-dark table-hover mb-0" style="font-size: 0.85rem;">
                             <thead>
                                 <tr>
                                     <th>Hostname</th>
                                     <th>Role</th>
-                                    <th>Tasks</th> <th>Status</th>
-                                    <th>Addr</th>
+                                    <th>Tasks</th>
+                                    <th>Status</th>
+                                    <th>Address</th>
                                 </tr>
                             </thead>
                             <tbody id="node-list">
-                                </tbody>
+                                <tr><td colspan="5" class="text-center text-muted">Loading...</td></tr>
+                            </tbody>
                         </table>
                     </div>
                 </div>
             </div>
+        </div>
 
-            <div class="col-lg-7">
-                <div class="card bg-transparent border-0">
-                    <div class="card-header bg-transparent border-0 ps-0 text-white">Autoscaling Services</div>
-                    <div class="row" id="service-list">
-                        </div>
+        <!-- Autoscaling Services - 3 Per Row -->
+        <div class="row">
+            <div class="col-12 mb-3">
+                <h5 class="text-white">Autoscaling Services</h5>
+            </div>
+            <div class="col-12">
+                <div class="row" id="service-list">
+                    <!-- Services will be populated here -->
                 </div>
             </div>
         </div>
     </div>
 
     <script>
+        let updateInProgress = false;
+
         async function loadData() {
+            if (updateInProgress) return;
+            
             try {
                 const res = await fetch('/api/data');
                 const json = await res.json();
@@ -74,128 +243,240 @@
                 document.getElementById('conn-status').className = 'badge bg-success';
                 document.getElementById('conn-status').innerText = 'Online';
 
-                // --- 1. UPDATE SYSTEM STATS ---
-                const sys = json.system;
-                document.getElementById('count-nodes').innerText = sys.nodes.length;
-                document.getElementById('count-stacks').innerText = sys.info.stacks;
-                document.getElementById('count-services').innerText = sys.info.services;
-                document.getElementById('count-containers').innerText = sys.info.containers;
-                document.getElementById('count-nets').innerText = sys.info.networks;
-                document.getElementById('count-vols').innerText = sys.info.volumes;
-
-                // --- 2. UPDATE NODE TABLE ---
-                const nodeTable = document.getElementById('node-list');
-                let nodeHtml = '';
-                sys.nodes.forEach(n => {
-                    const statusClass = n.status === 'ready' ? 'dot-ready' : 'dot-down';
-                    const roleClass = n.role === 'manager' ? 'role-manager' : 'role-worker';
-                    
-                    // Color code high container counts
-                    const countColor = n.containers > 0 ? 'text-info' : 'text-muted';
-
-                    nodeHtml += `
-                    <tr>
-                        <td><span class="status-dot ${statusClass}"></span>${n.name}</td>
-                        <td><span class="role-badge ${roleClass}">${n.role}</span></td>
-                        <td class="${countColor} fw-bold">${n.containers}</td>
-                        <td>${n.status}</td>
-                        <td class="text-muted">${n.addr}</td>
-                    </tr>`;
-                });
-                nodeTable.innerHTML = nodeHtml;
-
-                // --- 3. UPDATE SERVICE CARDS ---
-                const container = document.getElementById('service-list');
-                const services = json.services;
-
-                services.forEach(s => {
-                    const cardId = `card-${s.name}`;
-                    const existingCard = document.getElementById(cardId);
-                    
-                    const activeClass = s.config.enabled ? 'dot-ready' : '';
-                    const cardBorder = s.config.enabled ? 'border-success' : 'border-secondary';
-                    const cpuColor = s.cpu > s.config.target ? 'text-danger' : 'text-warning';
-                    const memColor = s.memory > 80 ? 'text-danger' : 'text-primary';
-
-                    if (existingCard) {
-                        // UPDATE EXISTING
-                        existingCard.className = `card ${cardBorder}`;
-                        document.getElementById(`rep-${s.name}`).innerText = s.replicas;
-                        
-                        const cpuEl = document.getElementById(`cpu-${s.name}`);
-                        cpuEl.innerText = s.cpu + "%";
-                        cpuEl.className = cpuColor;
-
-                        const memEl = document.getElementById(`mem-${s.name}`);
-                        memEl.innerText = s.memory + "%";
-                        memEl.className = memColor;
-                    } else {
-                        // CREATE NEW
-                        const isEnabled = s.config.enabled ? 'checked' : '';
-                        const html = `
-                        <div class="col-md-6 mb-3">
-                            <div class="card ${cardBorder}" id="${cardId}">
-                                <div class="card-body">
-                                    <div class="d-flex justify-content-between align-items-center mb-3">
-                                        <h5 class="card-title mb-0 text-truncate" title="${s.name}">
-                                            <span class="status-dot ${activeClass}" style="background-color:#444"></span>${s.display}
-                                        </h5>
-                                        <div class="form-check form-switch">
-                                            <input class="form-check-input" type="checkbox" id="enable-${s.name}" onchange="saveConfig('${s.name}')" ${isEnabled}>
-                                        </div>
-                                    </div>
-                                    <div class="row text-center mb-3">
-                                        <div class="col-4"><h3 class="text-info" id="rep-${s.name}">${s.replicas}</h3><small>Replicas</small></div>
-                                        <div class="col-4"><h3 class="${cpuColor}" id="cpu-${s.name}">${s.cpu}%</h3><small>CPU</small></div>
-                                        <div class="col-4"><h3 class="${memColor}" id="mem-${s.name}">${s.memory}%</h3><small>RAM</small></div>
-                                    </div>
-                                    <div class="input-group input-group-sm mb-2">
-                                        <span class="input-group-text bg-dark text-secondary">Min</span>
-                                        <input type="number" class="form-control bg-dark text-light" id="min-${s.name}" value="${s.config.min}">
-                                        <span class="input-group-text bg-dark text-secondary">Max</span>
-                                        <input type="number" class="form-control bg-dark text-light" id="max-${s.name}" value="${s.config.max}">
-                                    </div>
-                                    <div class="input-group input-group-sm">
-                                        <span class="input-group-text bg-dark text-secondary">Target CPU%</span>
-                                        <input type="number" class="form-control bg-dark text-light" id="target-${s.name}" value="${s.config.target}">
-                                        <button class="btn btn-outline-primary" onclick="saveConfig('${s.name}')">Save</button>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>`;
-                        container.insertAdjacentHTML('beforeend', html);
-                    }
-                });
+                updateSystemStats(json.system);
+                updateNodeTable(json.system.nodes);
+                updateServiceCards(json.services);
 
             } catch (e) { 
-                console.error(e);
+                console.error('Data fetch error:', e);
                 document.getElementById('conn-status').className = 'badge bg-danger';
                 document.getElementById('conn-status').innerText = 'Offline';
             }
         }
 
+        function updateSystemStats(sys) {
+            document.getElementById('count-nodes').innerText = sys.nodes.length;
+            document.getElementById('count-stacks').innerText = sys.info.stacks;
+            document.getElementById('count-services').innerText = sys.info.services;
+            document.getElementById('count-containers').innerText = sys.info.containers;
+            document.getElementById('count-nets').innerText = sys.info.networks;
+            document.getElementById('count-vols').innerText = sys.info.volumes;
+        }
+
+        function updateNodeTable(nodes) {
+            const nodeTable = document.getElementById('node-list');
+            if (!nodes || nodes.length === 0) {
+                nodeTable.innerHTML = '<tr><td colspan="5" class="text-center text-muted">No nodes found</td></tr>';
+                return;
+            }
+
+            let nodeHtml = '';
+            nodes.forEach(n => {
+                const statusClass = n.status === 'ready' ? 'dot-ready' : 'dot-down';
+                const roleClass = n.role === 'manager' ? 'role-manager' : 'role-worker';
+                const countColor = n.containers > 0 ? 'text-info fw-bold' : 'text-muted';
+
+                nodeHtml += `
+                <tr>
+                    <td><span class="status-dot ${statusClass}"></span>${n.name}</td>
+                    <td><span class="role-badge ${roleClass}">${n.role.toUpperCase()}</span></td>
+                    <td class="${countColor}">${n.containers}</td>
+                    <td class="text-capitalize">${n.status}</td>
+                    <td class="text-muted">${n.addr}</td>
+                </tr>`;
+            });
+            nodeTable.innerHTML = nodeHtml;
+        }
+
+        function updateServiceCards(services) {
+            const container = document.getElementById('service-list');
+
+            services.forEach(s => {
+                const cardId = `card-${s.name}`;
+                const existingCard = document.getElementById(cardId);
+                
+                const isEnabled = s.config.enabled;
+                const cardBorder = isEnabled ? 'border-success' : 'border-secondary';
+                const cpuColor = s.cpu > s.config.cpu_target ? 'text-danger' : (s.cpu > s.config.cpu_target * 0.8 ? 'text-warning' : 'text-success');
+                const memColor = s.memory > s.config.memory_target ? 'text-danger' : (s.memory > s.config.memory_target * 0.8 ? 'text-warning' : 'text-info');
+
+                if (existingCard) {
+                    // Update existing card
+                    existingCard.className = `card ${cardBorder}`;
+                    
+                    const repEl = document.getElementById(`rep-${s.name}`);
+                    if (repEl) {
+                        repEl.innerText = s.mode === 'global' ? s.replicas : s.replicas;
+                        if (s.mode === 'global') {
+                            document.getElementById(`rep-label-${s.name}`).innerText = 'Tasks';
+                        }
+                    }
+                    
+                    const cpuEl = document.getElementById(`cpu-${s.name}`);
+                    if (cpuEl) {
+                        cpuEl.innerText = s.cpu.toFixed(1) + '%';
+                        cpuEl.className = `metric-value ${cpuColor}`;
+                    }
+
+                    const memEl = document.getElementById(`mem-${s.name}`);
+                    if (memEl) {
+                        memEl.innerText = s.memory.toFixed(1) + '%';
+                        memEl.className = `metric-value ${memColor}`;
+                    }
+                } else {
+                    // Create new card
+                    createServiceCard(container, s, cardBorder, cpuColor, memColor);
+                }
+            });
+        }
+
+        function createServiceCard(container, s, cardBorder, cpuColor, memColor) {
+            const isEnabled = s.config.enabled ? 'checked' : '';
+            const isGlobal = s.mode === 'global';
+            const replicaLabel = isGlobal ? 'Tasks' : 'Replicas';
+            const modeBadge = isGlobal ? '<span class="mode-badge">GLOBAL</span>' : '';
+            
+            const html = `
+            <div class="col-lg-4 col-md-6 mb-3">
+                <div class="card ${cardBorder}" id="card-${s.name}">
+                    <div class="card-body">
+                        <!-- Header -->
+                        <div class="d-flex justify-content-between align-items-center mb-3">
+                            <h5 class="card-title mb-0 text-truncate" title="${s.name}">
+                                <span class="status-dot ${s.config.enabled ? 'dot-ready' : ''}" style="background-color:#444"></span>
+                                ${s.display} ${modeBadge}
+                            </h5>
+                            <div class="form-check form-switch">
+                                <input class="form-check-input" type="checkbox" 
+                                       id="enable-${s.name}" 
+                                       onchange="saveConfig('${s.name}')" 
+                                       ${isEnabled}
+                                       ${isGlobal ? 'disabled' : ''}>
+                            </div>
+                        </div>
+
+                        <!-- Metrics -->
+                        <div class="row text-center mb-3">
+                            <div class="col-4">
+                                <div class="metric-card">
+                                    <div class="metric-value text-info" id="rep-${s.name}">${s.replicas}</div>
+                                    <div class="metric-label" id="rep-label-${s.name}">${replicaLabel}</div>
+                                </div>
+                            </div>
+                            <div class="col-4">
+                                <div class="metric-card">
+                                    <div class="metric-value ${cpuColor}" id="cpu-${s.name}">${s.cpu.toFixed(1)}%</div>
+                                    <div class="metric-label">CPU</div>
+                                </div>
+                            </div>
+                            <div class="col-4">
+                                <div class="metric-card">
+                                    <div class="metric-value ${memColor}" id="mem-${s.name}">${s.memory.toFixed(1)}%</div>
+                                    <div class="metric-label">Memory</div>
+                                </div>
+                            </div>
+                        </div>
+
+                        ${isGlobal ? '' : `
+                        <!-- Replica Limits -->
+                        <div class="threshold-group">
+                            <div class="threshold-label">Replica Limits</div>
+                            <div class="input-group input-group-sm">
+                                <span class="input-group-text bg-dark text-secondary">Min</span>
+                                <input type="number" class="form-control bg-dark text-light" 
+                                       id="min-${s.name}" value="${s.config.min}" min="1">
+                                <span class="input-group-text bg-dark text-secondary">Max</span>
+                                <input type="number" class="form-control bg-dark text-light" 
+                                       id="max-${s.name}" value="${s.config.max}" min="1">
+                            </div>
+                        </div>
+
+                        <!-- CPU Threshold -->
+                        <div class="threshold-group">
+                            <div class="threshold-label">⚡ CPU Threshold</div>
+                            <div class="input-group input-group-sm">
+                                <span class="input-group-text bg-dark text-secondary">Target %</span>
+                                <input type="number" class="form-control bg-dark text-light" 
+                                       id="cpu-target-${s.name}" value="${s.config.cpu_target}" 
+                                       min="1" max="100" step="5">
+                                <span class="input-group-text bg-dark text-muted">
+                                    <small>Scale if > target</small>
+                                </span>
+                            </div>
+                        </div>
+
+                        <!-- Memory Threshold -->
+                        <div class="threshold-group">
+                            <div class="threshold-label">💾 Memory Threshold</div>
+                            <div class="input-group input-group-sm">
+                                <span class="input-group-text bg-dark text-secondary">Target %</span>
+                                <input type="number" class="form-control bg-dark text-light" 
+                                       id="mem-target-${s.name}" value="${s.config.memory_target}" 
+                                       min="1" max="100" step="5">
+                                <span class="input-group-text bg-dark text-muted">
+                                    <small>Scale if > target</small>
+                                </span>
+                            </div>
+                        </div>
+
+                        <!-- Save Button -->
+                        <button class="btn btn-outline-primary btn-sm w-100 mt-2" 
+                                onclick="saveConfig('${s.name}')">
+                            💾 Save Configuration
+                        </button>
+                        `}
+                    </div>
+                </div>
+            </div>`;
+            
+            container.insertAdjacentHTML('beforeend', html);
+        }
+
         async function saveConfig(name) {
+            updateInProgress = true;
             const min = parseInt(document.getElementById(`min-${name}`).value);
             const max = parseInt(document.getElementById(`max-${name}`).value);
-            const target = parseFloat(document.getElementById(`target-${name}`).value);
+            const cpu_target = parseFloat(document.getElementById(`cpu-target-${name}`).value);
+            const memory_target = parseFloat(document.getElementById(`mem-target-${name}`).value);
             const enabled = document.getElementById(`enable-${name}`).checked;
+            
             const btn = document.querySelector(`button[onclick="saveConfig('${name}')"]`);
-            btn.innerText = "...";
+            const originalText = btn.innerHTML;
+            btn.innerHTML = '⏳ Saving...';
+            btn.disabled = true;
 
             try {
                 await fetch(`/api/update/${name}`, {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({ enabled, min, max, target })
+                    body: JSON.stringify({ 
+                        enabled, 
+                        min, 
+                        max, 
+                        cpu_target,
+                        memory_target
+                    })
                 });
-                await loadData();
-                btn.innerText = "Saved";
-                setTimeout(() => btn.innerText = "Save", 1000);
-            } catch (e) { alert("Error: " + e); }
+                
+                btn.innerHTML = '✅ Saved!';
+                setTimeout(() => {
+                    btn.innerHTML = originalText;
+                    btn.disabled = false;
+                    updateInProgress = false;
+                    loadData();
+                }, 1000);
+                
+            } catch (e) { 
+                alert("Error saving configuration: " + e);
+                btn.innerHTML = originalText;
+                btn.disabled = false;
+                updateInProgress = false;
+            }
         }
 
+        // Initial load and refresh
         loadData();
-        setInterval(loadData, 2000);
+        setInterval(loadData, 3000);
     </script>
 </body>
 </html>
